@@ -350,6 +350,6 @@ Outputs:
 
   PublicLoadBalancerSG:
     Description: A security group used to allow ssh login to bastion host
-    Value: !Ref 'BastionHostSecurityGroup'
+    Value: !Ref 'PublicLoadBalancerSG'
     Export:
       Name: !Join [ '-', [ !Ref 'AWS::StackName', 'PublicLoadBalancerSG' ] ]
