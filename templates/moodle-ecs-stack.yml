@@ -331,6 +331,7 @@ Resources:
           PortMappings:
             - 
               ContainerPort: !Ref 'ContainerPort'
+              HostPort: 80
               Protocol: tcp
   
   # The service. The service is a resource which allows you to run multiple
