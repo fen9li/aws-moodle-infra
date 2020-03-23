@@ -23,29 +23,13 @@ jobs:
     - name: sync cloudformation templates to s3 bucket `moodle-ecs-stack-templates-home`
       run: |
         aws s3 sync templates s3://moodle-ecs-stack-templates-home --delete
-#    - name: Create moodle ecr stack if not exists, update stack if exists 
-#      env:
-#        stackName: moodle-ecr-stack-dev
-#        stackTemplateUrl: "http://moodle-ecs-stack-templates-home.s3.amazonaws.com/moodle-ecr-stack.yml"
-#        env: dev
-#      run: |
-#        ./.github/bin/ecr-stack-exists.sh
-    - name: Create moodle vpc stack if not exists, update stack if exists 
+    - name: Create moodle ecs stack if not exists, update stack if exists 
       env:
-        stackName: moodle-vpc-stack-dev
-        stackTemplateUrl: "http://moodle-ecs-stack-templates-home.s3.amazonaws.com/moodle-vpc-stack.yml"
+        stackName: moodle-ecs-stack-dev
+        stackTemplateUrl: "http://moodle-ecs-stack-templates-home.s3.amazonaws.com/moodle-ecs-stack.yml"
         env: dev
-        SSHLocation: '123.243.138.223/32'
       run: |
-        ./.github/bin/vpc-stack-exists.sh
-#    - name: Create moodle ecs stack if not exists, update stack if exists 
-#      env:
-#        stackName: moodle-ecs-stack-dev
-#        stackTemplateUrl: "http://moodle-ecs-stack-templates-home.s3.amazonaws.com/moodle-ecs-stack.yml"
-#        env: dev
-#        VpcStackName: moodle-vpc-stack-dev
-#      run: |
-#        ./.github/bin/ecs-stack-exists.sh      
+        ./.github/bin/ecs-stack-exists.sh      
 #    - name: Create moodle rds stack if not exists, update stack if exists 
 #      env:
 #        stackName: moodle-rds-stack-dev
@@ -64,3 +48,10 @@ jobs:
 #        VpcStackName: moodle-vpc-stack-dev
 #      run: |
 #        ./.github/bin/bastion-stack-exists.sh
+#    - name: Create moodle ecr stack if not exists, update stack if exists 
+#      env:
+#        stackName: moodle-ecr-stack-dev
+#        stackTemplateUrl: "http://moodle-ecs-stack-templates-home.s3.amazonaws.com/moodle-ecr-stack.yml"
+#        env: dev
+#      run: |
+#        ./.github/bin/ecr-stack-exists.sh

@@ -1,10 +1,10 @@
----
 AWSTemplateFormatVersion: '2010-09-09'
 
-Metadata: 
-  License: Apache-2.0
-
-Description: "This stack create ecs cluster, auto scaling group and efs for moodle infrastructure."
+Description: A stack for deploying containerized applications onto a cluster of EC2 hosts using Elastic Container Service. 
+             This stack runs containers on hosts that are in a private VPC subnet. 
+             Outbound network traffic from the hosts must go out through a NAT gateway. 
+             There is one load balancer inside the public subnet, which can be used to send traffic to the containers in the private subnet. 
+             https://github.com/awslabs/aws-cloudformation-templates/blob/master/aws/services/ECS/EC2LaunchType/clusters/private-vpc.yml
 
 Parameters:
   env:
@@ -12,12 +12,17 @@ Parameters:
     Type: String
     AllowedValues: ["dev", "prod"]
     Default: dev
-  VpcStackName:
-    Description: moodle ecs stack to deploy this service stack
+  project:
+    Description: Project name to provision resources
     Type: String
-    AllowedValues: ["moodle-vpc-stack-dev", "moodle-vpc-stack-prod"]
-    Default: moodle-vpc-stack-dev
+    Default: moodle
 
+#  SSHLocation:
+#    Description: ip address allowed to ssh login bastion host, use command 'curl checkip.amazonaws.com' to get your Internet facing ip address
+#    Type: String
+#    Default: '123.243.138.223/32'
+
+  # parameters for ecs
   DesiredCapacity:
     Type: Number
     Default: '1'
@@ -30,187 +35,332 @@ Parameters:
     Description: AMI ID
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/ecs/optimized-ami/amazon-linux-2/recommended/image_id
-  KeyName:
-    Description: EC2 instance key name
-    Type: String
-    Default: moodle-keypair
   InstanceType:
     Description: EC2 instance type
     Type: String
-    Default: t3.micro
-    AllowedValues: [t3.micro, t3.small, t3.medium, t3.large, m3.medium, m3.large,
-      m3.xlarge, m3.2xlarge, m4.large, m4.xlarge, m4.2xlarge, m4.4xlarge, m4.10xlarge,
-      c4.large, c4.xlarge, c4.2xlarge, c4.4xlarge, c4.8xlarge, c3.large, c3.xlarge,
-      c3.2xlarge, c3.4xlarge, c3.8xlarge, r3.large, r3.xlarge, r3.2xlarge, r3.4xlarge,
-      r3.8xlarge, i2.xlarge, i2.2xlarge, i2.4xlarge, i2.8xlarge]
+    Default: t3.nano
+    AllowedValues: [t3.nano, t3.micro, t3.small, t3.medium, t3.large, t3.xlarge, t3.2xlarge, 
+                    m4.large, m4.xlarge, m4.2xlarge, m4.4xlarge, m4.10xlarge, 
+                    c4.large, c4.xlarge, c4.2xlarge, c4.4xlarge, c4.8xlarge, 
+                    r3.large, r3.xlarge, r3.2xlarge, r3.4xlarge, r3.8xlarge, 
+                    i2.xlarge, i2.2xlarge, i2.4xlarge, i2.8xlarge]
     ConstraintDescription: Please choose a valid instance type.
 
-  MountPoint:
-    Description: The ecs container instances mount point for the EFS volume
-    Type: String
-    Default: MoodleDataVolumeEFS
-
-  ImageUrl:
-    Type: String
-    Default: nginx
-    Description: The url of a docker image that contains the application process that will handle the traffic for this service
-  ContainerCpu:
-    Type: Number
-    Default: 256
-    Description: How much CPU to give the container. 1024 is 1 CPU
-  ContainerMemory:
-    Type: Number
-    Default: 512
-    Description: How much memory in megabytes to give the container
-  ContainerPort:
-    Type: Number
-    Default: 80
-    Description: What port number the application inside the docker container is binding to
-
-  DesiredCount:
-    Type: Number
-    Default: 1
-    Description: How many copies of the service task to run
-
-  Path:
-    Type: String
-    Default: "*"
-    Description: A path on the public load balancer that this service 
-                 should be connected to. Use * to send all load balancer
-                 traffic to this service.
-  Priority:
-    Type: Number
-    Default: 1
-    Description: The priority for the routing rule added to the load balancer.
-                 This only applies if your have multiple services which have been
-                 assigned to different paths on the load balancer.
-
-  Role:
-    Type: String
-    Default: ""
-    Description: (Optional) An IAM role to give the service's containers if the code within needs to
-                 access other AWS resources like S3 buckets, DynamoDB tables, etc
-  
-Conditions:
-  HasCustomRole: !Not [ !Equals [!Ref 'Role', ''] ]
-
-Mappings: 
-  EcsName: 
+Mappings:
+  # Hard values for the subnet masks, both dev and prod environment. 
+  # These masks define the range of internal IP addresses that can be assigned.
+  # The VPC can have all IP's from 10.0.0.0 to 10.0.255.255
+  # There are ten subnets which cover the ranges:
+  #
+  # 10.10.10.0 - 10.10.10.255
+  # 10.10.11.0 - 10.10.11.255
+  # 10.10.12.0 - 10.10.12.255
+  # 10.10.13.0 - 10.10.13.255
+  # 10.11.20.0 - 10.11.20.255
+  # 10.11.21.0 - 10.11.21.255
+  # 10.11.22.0 - 10.11.22.255
+  # 10.11.23.0 - 10.11.23.255
+  #
+  # If you need more IP addresses (perhaps you have so many
+  # instances that you run out) then you can customize these
+  # ranges to add more
+  vpcCIDR:
     dev: 
-      Name: "moodle-dev-ecs"
+      CIDR: "10.10.0.0/16"
     prod: 
-      Name: "moodle-prod-ecs"
-  VolumeName:
+      CIDR: "10.11.0.0/16"
+  PublicSubnet1CIDR: 
     dev: 
-      Name: "moodle-dev-efs-vol"
+      CIDR: "10.10.10.0/24"
     prod: 
-      Name: "moodle-prod-efs-vol"
-  ServiceName: 
+      CIDR: "10.11.20.0/24"
+  PublicSubnet2CIDR:
     dev: 
-      Name: "moodle-service-stack-dev"
+      CIDR: "10.10.12.0/24"
     prod: 
-      Name: "moodle-service-stack-prod"
+      CIDR: "10.11.22.0/24"
+  PrivateSubnet1CIDR: 
+    dev: 
+      CIDR: "10.10.11.0/24"
+    prod: 
+      CIDR: "10.11.21.0/24"
+  PrivateSubnet2CIDR:
+    dev: 
+      CIDR: "10.10.13.0/24"
+    prod: 
+      CIDR: "10.11.23.0/24"
 
 Resources:
+  # VPC in which containers will be networked.
+  # It has two public subnets, and two private subnets.
+  # We distribute the subnets across the first two available subnets
+  # for the region, for high availability.
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      CidrBlock: !FindInMap [vpcCIDR, !Ref env, CIDR]
+      Tags:
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'vpc' ] ]
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+
+  # Two public subnets, where containers can have public IP addresses
+  PublicSubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+         Fn::Select:
+         - 0
+         - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref 'VPC'
+      CidrBlock: !FindInMap [PublicSubnet1CIDR, !Ref env, CIDR]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'PublicSubnetOne' ] ]
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+  PublicSubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+         Fn::Select:
+         - 1
+         - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref 'VPC'
+      CidrBlock: !FindInMap [PublicSubnet2CIDR, !Ref env, CIDR]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'PublicSubnetTwo' ] ]
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+
+  # Two private subnets where containers will only have private
+  # IP addresses, and will only be reachable by other members of the
+  # VPC
+  PrivateSubnetOne:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+         Fn::Select:
+         - 0
+         - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref 'VPC'
+      CidrBlock: !FindInMap [PrivateSubnet1CIDR, !Ref env, CIDR]
+      Tags:
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'PrivateSubnetOne' ] ]
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+  PrivateSubnetTwo:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone:
+         Fn::Select:
+         - 1
+         - Fn::GetAZs: {Ref: 'AWS::Region'}
+      VpcId: !Ref 'VPC'
+      CidrBlock: !FindInMap [PrivateSubnet2CIDR, !Ref env, CIDR]
+      Tags:
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'PrivateSubnetTwo' ] ]
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+  
+  # Setup networking resources for the public subnets. Containers
+  # in the public subnets have public IP addresses and the routing table
+  # sends network traffic via the internet gateway.
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties: 
+      Tags: 
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'InternetGateway' ] ]  
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+  GatewayAttachement:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref 'VPC'
+      InternetGatewayId: !Ref 'InternetGateway'
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags: 
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'PublicRouteTable' ] ]  
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachement
+    Properties:
+      RouteTableId: !Ref 'PublicRouteTable'
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref 'InternetGateway'
+  PublicSubnetOneRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetOne
+      RouteTableId: !Ref PublicRouteTable
+  PublicSubnetTwoRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetTwo
+      RouteTableId: !Ref PublicRouteTable
+
+  # Setup networking resources for the private subnets. Containers
+  # in these subnets have only private IP addresses, and must use a NAT
+  # gateway to talk to the internet. We launch two NAT gateways, one for
+  # each private subnet.
+  NatGatewayOneAttachment:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachement
+    Properties:
+      Domain: vpc
+      Tags: 
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'NatGatewayOneAttachment' ] ]  
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+  NatGatewayTwoAttachment:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachement
+    Properties:
+      Domain: vpc
+      Tags: 
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'NatGatewayTwoAttachment' ] ]
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+  NatGatewayOne:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayOneAttachment.AllocationId
+      SubnetId: !Ref PublicSubnetOne
+      Tags: 
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'NatGatewayOne' ] ]
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+  NatGatewayTwo:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayTwoAttachment.AllocationId
+      SubnetId: !Ref PublicSubnetTwo
+      Tags: 
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'NatGatewayTwo' ] ]
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+  PrivateRouteTableOne:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags: 
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'PrivateRouteTableOne' ] ]  
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+  PrivateRouteOne:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableOne
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayOne
+  PrivateRouteTableOneAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableOne
+      SubnetId: !Ref PrivateSubnetOne
+  PrivateRouteTableTwo:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags: 
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'PrivateRouteTableTwo' ] ]  
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+  PrivateRouteTwo:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableTwo
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGatewayTwo
+  PrivateRouteTableTwoAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableTwo
+      SubnetId: !Ref PrivateSubnetTwo
+
   # ECS Resources
   ECSCluster:
     Type: AWS::ECS::Cluster
     Properties:
       Tags:
         - Key: Name
-          Value: !FindInMap [EcsName, !Ref env, Name]
-        - Key: Project
-          Value: moodle
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'ECSCluster' ] ]
         - Key: Createdby
-          Value: fen9li
-        - Key: ChargeTo
-          Value: !Ref env
+          Value: !Ref 'AWS::StackName'
 
-  # EFS resource
-  MountTargetSecurityGroup:
+  # A security group for the EC2 hosts that will run the containers.
+  # Two rules, allowing network traffic from a public facing load
+  # balancer and from other hosts in the security group.
+  #
+  # Remove any of the following ingress rules that are not needed.
+  # If you want to make direct requests to a container using its
+  # public IP address you'll need to add a security group rule
+  # to allow traffic from all IP addresses.
+  EcsHostSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      VpcId:
-        Fn::ImportValue: 
-          !Join ['-', [!Ref 'VpcStackName', 'VPCId']]
-      GroupDescription: Security group for mount target
+      GroupDescription: Access to the ECS hosts that run containers
+      VpcId: !Ref 'VPC'
       Tags:
         - Key: Name
-          Value: !Join [ '-', [ !Ref env , 'MountTargetSecurityGroup' ] ]
-  MountTargetSecurityGroupIngressFromBastionHost:
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'EcsHostSecurityGroup' ] ]
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+  EcsSecurityGroupIngressFromPublicALB:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
-      Description: Ingress from the bastion host
-      GroupId: !Ref MountTargetSecurityGroup
-      IpProtocol: tcp
-      FromPort: 2049
-      ToPort: 2049
-      SourceSecurityGroupId: 
-        Fn::ImportValue: 
-          !Join ['-', [!Ref 'VpcStackName', 'BastionHostSecurityGroup']]
-  MountTargetSecurityGroupIngressFromEcsHost:
+      Description: Ingress from the public ALB
+      GroupId: !Ref 'EcsHostSecurityGroup'
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref 'PublicLoadBalancerSG'
+  EcsSecurityGroupIngressFromSelf:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
-      Description: Ingress from the ecs hosts
-      GroupId: !Ref MountTargetSecurityGroup
-      IpProtocol: tcp
-      FromPort: 2049
-      ToPort: 2049
-      SourceSecurityGroupId: 
-        Fn::ImportValue: 
-          !Join ['-', [!Ref 'VpcStackName', 'EcsHostSecurityGroup']]
-
-  FileSystem:
-    Type: AWS::EFS::FileSystem
-    Properties:
-      PerformanceMode: generalPurpose
-      FileSystemTags:
-      - Key: Name
-        Value: !FindInMap [VolumeName, !Ref env, Name]
-      - Key: Project
-        Value: moodle
-      - Key: Createdby
-        Value: fen9li
-      - Key: ChargeTo
-        Value: !Ref env
-  MountTargetOne:
-    Type: AWS::EFS::MountTarget
-    Properties:
-      FileSystemId:
-        Ref: FileSystem
-      SubnetId: 
-        Fn::ImportValue: 
-          !Join ['-', [!Ref 'VpcStackName', 'PrivateSubnetOne']]
-      SecurityGroups:
-        - !Ref MountTargetSecurityGroup
-  MountTargetTwo:
-    Type: AWS::EFS::MountTarget
-    Properties:
-      FileSystemId:
-        Ref: FileSystem
-      SubnetId: 
-        Fn::ImportValue: 
-          !Join ['-', [!Ref 'VpcStackName', 'PrivateSubnetTwo']]
-      SecurityGroups:
-        - !Ref MountTargetSecurityGroup
+      Description: Ingress from other containers in the same security group
+      GroupId: !Ref 'EcsHostSecurityGroup'
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref 'EcsHostSecurityGroup'
 
   # Autoscaling group. This launches the actual EC2 instances that will register
   # themselves as members of the cluster, and run the docker containers.
   ECSAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
-    DependsOn:
-    - MountTargetOne
-    - MountTargetTwo
     Properties:
       VPCZoneIdentifier:
-        - Fn::ImportValue: 
-            !Join ['-', [!Ref 'VpcStackName', 'PrivateSubnetOne']]
-        - Fn::ImportValue: 
-            !Join ['-', [!Ref 'VpcStackName', 'PrivateSubnetTwo']]
-      LaunchConfigurationName: !Ref ContainerInstances
+        - !Ref PrivateSubnetOne
+        - !Ref PrivateSubnetTwo
+      LaunchConfigurationName: !Ref 'ContainerInstances'
       MinSize: '1'
-      MaxSize: !Ref MaxSize
-      DesiredCapacity: !Ref DesiredCapacity
+      MaxSize: !Ref 'MaxSize'
+      DesiredCapacity: !Ref 'DesiredCapacity'
+      Tags:
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'ECSAutoScalingGroup' ] ]
+          PropagateAtLaunch: true
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+          PropagateAtLaunch: true
     CreationPolicy:
       ResourceSignal:
         Timeout: PT15M
@@ -220,25 +370,13 @@ Resources:
   ContainerInstances:
     Type: AWS::AutoScaling::LaunchConfiguration
     Properties:
-      ImageId: !Ref ECSAMI
-      KeyName: !Ref KeyName
-      SecurityGroups: 
-        - Fn::ImportValue: 
-            !Join ['-', [!Ref 'VpcStackName', 'EcsHostSecurityGroup']]
-      InstanceType: !Ref InstanceType
-      IamInstanceProfile: !Ref EC2InstanceProfile
+      ImageId: !Ref 'ECSAMI'
+      SecurityGroups: [!Ref 'EcsHostSecurityGroup']
+      InstanceType: !Ref 'InstanceType'
+      IamInstanceProfile: !Ref 'EC2InstanceProfile'
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash -xe
-
-          yum install -y nfs-utils
-          systemctl start nfs
-          systemctl enable nfs
-
-          yum install -y amazon-efs-utils
-          mkdir /mnt/efs
-          mount -t efs ${FileSystem}:/ /mnt/efs
-
           echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
           yum install -y aws-cfn-bootstrap
           /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource ECSAutoScalingGroup --region ${AWS::Region}
@@ -266,13 +404,15 @@ Resources:
             Resource: '*'
       Tags:
         - Key: Name
-          Value: !Join [ '-', [ !Ref env , 'ContainerLaunchConfiguration' ] ]
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'AutoscalingRole' ] ]
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
   EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
       Path: /
-      Roles: [!Ref EC2Role]
-    
+      Roles: [!Ref 'EC2Role']
+
   # Role for the EC2 hosts. This allows the ECS agent on the EC2 hosts
   # to communciate with the ECS control plane, as well as download the docker
   # images from ECR to run on your host.
@@ -287,137 +427,66 @@ Resources:
           Action: ['sts:AssumeRole']
       Path: /
       Policies:
-        - PolicyName: ecs-service
-          PolicyDocument:
-            Statement:
-            - Effect: Allow
-              Action:
-                - 'ecs:CreateCluster'
-                - 'ecs:DeregisterContainerInstance'
-                - 'ecs:DiscoverPollEndpoint'
-                - 'ecs:Poll'
-                - 'ecs:RegisterContainerInstance'
-                - 'ecs:StartTelemetrySession'
-                - 'ecs:Submit*'
-                - 'logs:CreateLogStream'
-                - 'logs:PutLogEvents'
-                - 'ecr:GetAuthorizationToken'
-                - 'ecr:BatchGetImage'
-                - 'ecr:GetDownloadUrlForLayer'
-              Resource: '*'
+      - PolicyName: ecs-service
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+              - 'ecs:CreateCluster'
+              - 'ecs:DeregisterContainerInstance'
+              - 'ecs:DiscoverPollEndpoint'
+              - 'ecs:Poll'
+              - 'ecs:RegisterContainerInstance'
+              - 'ecs:StartTelemetrySession'
+              - 'ecs:Submit*'
+              - 'logs:CreateLogStream'
+              - 'logs:PutLogEvents'
+              - 'ecr:GetAuthorizationToken'
+              - 'ecr:BatchGetImage'
+              - 'ecr:GetDownloadUrlForLayer'
+            Resource: '*'
       Tags:
         - Key: Name
-          Value: !Join [ '-', [ !Ref env , 'EC2Role' ] ]
-
-
-  # The task definition. This is a simple metadata description of what
-  # container to run, and what resource requirements it has.
-  TaskDefinition:
-    Type: AWS::ECS::TaskDefinition
-    Properties:
-      Family: !FindInMap [ServiceName, !Ref env, Name]
-      Cpu: !Ref 'ContainerCpu'
-      Memory: !Ref 'ContainerMemory'
-      TaskRoleArn:
-        Fn::If:
-          - 'HasCustomRole'
-          - !Ref 'Role'
-          - !Ref "AWS::NoValue"
-      ContainerDefinitions:
-        - Name: !FindInMap [ServiceName, !Ref env, Name]
-          Cpu: !Ref 'ContainerCpu'
-          Memory: !Ref 'ContainerMemory'
-          Image: !Ref 'ImageUrl'
-          PortMappings:
-            - 
-              ContainerPort: !Ref 'ContainerPort'
-  
-  # The service. The service is a resource which allows you to run multiple
-  # copies of a type of task, and gather up their logs and metrics, as well
-  # as monitor the number of running tasks and replace any that have crashed
-  Service:
-    Type: AWS::ECS::Service
-    DependsOn: LoadBalancerRule
-    Properties:
-      ServiceName: !FindInMap [ServiceName, !Ref env, Name]
-      Cluster: !Ref 'ECSCluster'
-      DeploymentConfiguration:
-        MaximumPercent: 200
-        MinimumHealthyPercent: 75
-      DesiredCount: !Ref 'DesiredCount'
-      TaskDefinition: !Ref 'TaskDefinition'
-      LoadBalancers:
-        - ContainerName: !FindInMap [ServiceName, !Ref env, Name]
-          ContainerPort: !Ref 'ContainerPort'
-          TargetGroupArn: !Ref 'TargetGroup'
-
-  # A target group. This is used for keeping track of all the tasks, and
-  # what IP addresses / port numbers they have. You can query it yourself,
-  # to use the addresses yourself, but most often this target group is just
-  # connected to an application load balancer, or network load balancer, so
-  # it can automatically distribute traffic across all the targets.
-  TargetGroup:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroup
-    Properties:
-      HealthCheckIntervalSeconds: 6
-      HealthCheckPath: /
-      HealthCheckProtocol: HTTP
-      HealthCheckTimeoutSeconds: 5
-      HealthyThresholdCount: 2
-      Name: !FindInMap [ServiceName, !Ref env, Name]
-      Port: 80
-      Protocol: HTTP
-      UnhealthyThresholdCount: 2
-      VpcId:
-        Fn::ImportValue:
-          !Join ['-', [!Ref 'VpcStackName', 'VPCId']]
-
-  # Create a rule on the load balancer for routing traffic to the target group
-  LoadBalancerRule:
-    Type: AWS::ElasticLoadBalancingV2::ListenerRule
-    Properties:
-      Actions:
-        - TargetGroupArn: !Ref 'TargetGroup'
-          Type: 'forward'
-      Conditions:
-        - Field: path-pattern
-          Values: [!Ref 'Path']
-      ListenerArn: !Ref 'PublicLoadBalancerListener'
-      Priority: !Ref 'Priority'
-
-  # Load balancers for getting traffic to containers.
-  # This sample template creates two load balancers:
-  #
-  # - One public load balancer, hosted in public subnets that is accessible
-  #   to the public, and is intended to route traffic to one or more public
-  #   facing services.
-  # - One private load balancer, hosted in private subnets, that only
-  #   accepts traffic from other containers in the cluster, and is
-  #   intended for private services that should not be accessed directly
-  #   by the public.
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'EC2Role' ] ]
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+  # Load balancers for getting traffic to containers. This sample template creates one load balancer hosted in public subnets that is accessible
+  # to the public, and is intended to route traffic to one or more public facing services.
 
   # A public facing load balancer, this is used for accepting traffic from the public
   # internet and directing it to public facing microservices
+  PublicLoadBalancerSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Access to the public facing load balancer
+      VpcId: !Ref 'VPC'
+      SecurityGroupIngress:
+        # Allow access to ALB from anywhere on the internet
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: -1
+      Tags:
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'PublicLoadBalancerSG' ] ]
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
   PublicLoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
       Scheme: internet-facing
       LoadBalancerAttributes:
-        - Key: idle_timeout.timeout_seconds
-          Value: '30'
+      - Key: idle_timeout.timeout_seconds
+        Value: '30'
       Subnets:
         # The load balancer is placed into the public subnets, so that traffic
         # from the internet can reach the load balancer directly via the internet gateway
-        - Fn::ImportValue: 
-            !Join ['-', [!Ref 'VpcStackName', 'PrivateSubnetOne']]
-        - Fn::ImportValue: 
-            !Join ['-', [!Ref 'VpcStackName', 'PrivateSubnetTwo']]
-      SecurityGroups: 
-        - Fn::ImportValue: 
-            !Join ['-', [!Ref 'VpcStackName', 'PublicLoadBalancerSG']]
+        - !Ref PublicSubnetOne
+        - !Ref PublicSubnetTwo
+      SecurityGroups: [!Ref 'PublicLoadBalancerSG']
       Tags:
         - Key: Name
-          Value: !Join [ '-', [ !Ref env , 'PublicLoadBalancer' ] ]
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'PublicLoadBalancer' ] ]
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
 
   # A dummy target group is used to setup the ALB to just drop traffic
   # initially, before any real service target groups have been added.
@@ -429,24 +498,24 @@ Resources:
       HealthCheckProtocol: HTTP
       HealthCheckTimeoutSeconds: 5
       HealthyThresholdCount: 2
+      Name: !Join ['-', [!Ref 'AWS::StackName', 'drop-1']]
       Port: 80
       Protocol: HTTP
       UnhealthyThresholdCount: 2
-      VpcId: 
-        Fn::ImportValue: 
-          !Join ['-', [!Ref 'VpcStackName', 'VPCId']]
+      VpcId: !Ref 'VPC'
       Tags:
         - Key: Name
-          Value: !Join [ '-', [ !Ref env , 'DummyTargetGroupPublic' ] ]
-
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'DummyTargetGroupPublic' ] ]
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
   PublicLoadBalancerListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     DependsOn:
       - PublicLoadBalancer
     Properties:
       DefaultActions:
-        - Type: 'forward'
-          TargetGroupArn: !Ref 'DummyTargetGroupPublic'
+        - TargetGroupArn: !Ref 'DummyTargetGroupPublic'
+          Type: 'forward'
       LoadBalancerArn: !Ref 'PublicLoadBalancer'
       Port: 80
       Protocol: HTTP
@@ -491,49 +560,61 @@ Resources:
               Resource: '*'
       Tags:
         - Key: Name
-          Value: !Join [ '-', [ !Ref env , 'ECSRole' ] ]
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'ECSRole' ] ]
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+
 # These are the values output by the CloudFormation template. Be careful
 # about changing any of them, because of them are exported with specific
 # names so that the other task related CF templates can use them.
 Outputs:
-  StackName:
-    Description: The name of this stack
-    Value: !Ref 'AWS::StackName'
-    Export:
-      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'StackName' ] ]
   ClusterName:
     Description: The name of the ECS cluster
     Value: !Ref 'ECSCluster'
     Export:
-      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'ClusterName' ] ]
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ClusterName' ] ]
   ExternalUrl:
     Description: The url of the external load balancer
     Value: !Join ['', ['http://', !GetAtt 'PublicLoadBalancer.DNSName']]
     Export:
-      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'ExternalUrl' ] ]
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ExternalUrl' ] ]
   ECSRole:
     Description: The ARN of the ECS role
     Value: !GetAtt 'ECSRole.Arn'
     Export:
-      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'ECSRole' ] ]
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ECSRole' ] ]
   PublicListener:
     Description: The ARN of the public load balancer's Listener
     Value: !Ref PublicLoadBalancerListener
     Export:
-      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'PublicListener' ] ]
-
-  FileSystemID:
-    Description: File system ID
-    Value: !Ref FileSystem
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'PublicListener' ] ]
+  VPCId:
+    Description: The ID of the VPC that this stack is deployed in
+    Value: !Ref 'VPC'
     Export:
-      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'FileSystemID' ] ]  
-  MountTargetOneID:
-    Description: Mount target one ID
-    Value: !Ref MountTargetOne
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'VPCId' ] ]
+  PublicSubnetOne:
+    Description: Public subnet one
+    Value: !Ref 'PublicSubnetOne'
     Export:
-      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'MountTargetOneID' ] ]
-  MountTargetTwoID:
-    Description: Mount target two ID
-    Value: !Ref MountTargetTwo
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'PublicSubnetOne' ] ]
+  PublicSubnetTwo:
+    Description: Public subnet two
+    Value: !Ref 'PublicSubnetTwo'
     Export:
-      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'MountTargetTwoID' ] ]
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'PublicSubnetTwo' ] ]
+  PrivateSubnetOne:
+    Description: Private subnet one
+    Value: !Ref 'PrivateSubnetOne'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'PrivateSubnetOne' ] ]
+  PrivateSubnetTwo:
+    Description: Private subnet two
+    Value: !Ref 'PrivateSubnetTwo'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'PrivateSubnetTwo' ] ]
+  EcsHostSecurityGroup:
+    Description: A security group used to allow containers to receive traffic
+    Value: !Ref 'EcsHostSecurityGroup'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'EcsHostSecurityGroup' ] ]
