@@ -1,0 +1,77 @@
+name: Provision moodle ecs infrastructure to dev environment
+
+on: 
+  push:
+    branches:
+    - develop
+    - feature
+
+jobs:
+  build:
+    name: build dev environment 
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v2
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ap-southeast-2
+    - name: sync cloudformation templates to s3 bucket `moodle-ecs-stack-templates-home`
+      run: |
+        aws s3 sync templates s3://moodle-ecs-stack-templates-home --delete
+#    - name: Create moodle ecr stack if not exists, update stack if exists 
+#      env:
+#        stackName: moodle-ecr-stack-dev
+#        stackTemplateUrl: "http://moodle-ecs-stack-templates-home.s3.amazonaws.com/moodle-ecr-stack.yml"
+#        env: dev
+#      run: |
+#        ./.github/bin/ecr-stack-exists.sh
+    - name: Create moodle vpc stack if not exists, update stack if exists 
+      env:
+        stackName: moodle-vpc-stack-dev
+        stackTemplateUrl: "http://moodle-ecs-stack-templates-home.s3.amazonaws.com/moodle-vpc-stack.yml"
+        env: dev
+        SSHLocation: '123.243.138.223/32'
+      run: |
+        ./.github/bin/vpc-stack-exists.sh
+#    - name: Create moodle ecs stack if not exists, update stack if exists 
+#      env:
+#        stackName: moodle-ecs-stack-dev
+#        stackTemplateUrl: "http://moodle-ecs-stack-templates-home.s3.amazonaws.com/moodle-ecs-stack.yml"
+#        env: dev
+#        VpcStackName: moodle-vpc-stack-dev
+#      run: |
+#        ./.github/bin/ecs-stack-exists.sh      
+#    - name: Create moodle service stack if not exists, update stack if exists 
+#      env:
+#        stackName: moodle-service-stack-dev
+#        stackTemplateUrl: "http://moodle-ecs-stack-templates-home.s3.amazonaws.com/moodle-service-stack.yml"
+#        env: dev
+#        VpcStackName: moodle-vpc-stack-dev
+#        EcsStackName: moodle-ecs-stack-dev
+#        ImageUrl: fen9li/easy-php-app
+#      run: |
+#        ./.github/bin/service-stack-exists.sh
+#    - name: Create moodle rds stack if not exists, update stack if exists 
+#      env:
+#        stackName: moodle-rds-stack-dev
+#        stackTemplateUrl: "http://moodle-ecs-stack-templates-home.s3.amazonaws.com/moodle-rds-stack.yml"
+#        env: dev
+#        VpcStackName: moodle-vpc-stack-dev
+#        DBUsername: ${{ secrets.AURORA_MASTER_USERNAME_DEV }}
+#        DBPassword: ${{ secrets.AURORA_MASTER_PASSWORD_DEV }}
+#      run: |
+#        ./.github/bin/rds-stack-exists.sh
+#    - name: Create moodle bastion stack if not exists, update stack if exists 
+#      env:
+#        stackName: moodle-bastion-stack-dev
+#        stackTemplateUrl: "http://moodle-ecs-stack-templates-home.s3.amazonaws.com/moodle-bastion-stack.yml"
+#        env: dev
+#        VpcStackName: moodle-vpc-stack-dev
+#      run: |
+#        ./.github/bin/bastion-stack-exists.sh
+#

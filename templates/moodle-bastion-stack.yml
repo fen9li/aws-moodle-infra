@@ -1,0 +1,81 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+
+Metadata: 
+  License: Apache-2.0
+
+Description: A stack for deploying moodle bastion host upon moodle vpc stack
+
+Parameters:
+  env:
+    Description: Environment name to provision resources
+    Type: String
+    AllowedValues: ['dev', 'prod']
+    Default: dev
+  VpcStackName:
+    Description: moodle vpc stack to deploy this service stack
+    Type: String
+    AllowedValues: ['moodle-vpc-stack-dev', 'moodle-vpc-stack-prod']
+    Default: moodle-vpc-stack-dev
+    
+  ImageId:
+    Description: moodle bastion host AMI ID 
+    Type: String
+    Default: ami-08fdde86b93accf1c
+  KeyName:
+    Description: EC2 instance key name
+    Type: String
+    Default: moodle-keypair
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    Default: t3.micro
+
+Mappings: 
+  BastionName: 
+    dev: 
+      Name: "moodle-bastion-dev"
+    prod: 
+      Name: "moodle-bastion-prod"
+      
+Resources:
+
+  BastionHost:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref ImageId
+      KeyName: !Ref KeyName
+      InstanceType: !Ref InstanceType
+      SubnetId: 
+        Fn::ImportValue: 
+          !Join ['-', [!Ref 'VpcStackName', 'PublicSubnetOne']]
+      SecurityGroupIds:
+      - Fn::ImportValue: 
+          !Join ['-', [!Ref 'VpcStackName', 'BastionHostSecurityGroup']]
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          yum update -y
+          yum install -y mariadb
+          yum install -y nfs-utils
+          systemctl start nfs
+          systemctl enable nfs
+      Tags: 
+        - 
+          Key: Name
+          Value: !FindInMap [BastionName, !Ref env, Name]
+        - 
+          Key: Project
+          Value: moodle
+
+Outputs:
+  PublicIP:
+    Description: The PublicIP of the bastion host
+    Value: !GetAtt BastionHost.PublicIp
+    Export:
+      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'PublicIP' ] ]
+  InstanceId:
+    Description: The InstanceId of the bastion host
+    Value: !Ref BastionHost
+    Export:
+      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'InstanceId' ] ]

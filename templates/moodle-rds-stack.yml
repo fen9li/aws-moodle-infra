@@ -1,0 +1,147 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Metadata: 
+  License: Apache-2.0
+
+Description: 'A stack for deploying rds aurora in private subnet with read replica.' 
+
+Parameters:
+  env:
+    Description: Environment name to provision resources
+    Type: String
+    AllowedValues: ["dev", "prod"]
+    Default: dev
+  VpcStackName:
+    Description: moodle ecs stack to deploy this service stack
+    Type: String
+    AllowedValues: ["moodle-vpc-stack-dev", "moodle-vpc-stack-prod"]
+    Default: moodle-vpc-stack-dev
+  DatabaseUsername:
+    AllowedPattern: "[a-zA-Z0-9]+"
+    ConstraintDescription: must be between 1 to 16 alphanumeric characters.
+    Description: The database admin account user name, between 1 to 16 alphanumeric characters.
+    MaxLength: '16'
+    MinLength: '1'
+    Type: String
+  DatabasePassword:
+    AllowedPattern: "[a-zA-Z0-9]+"
+    ConstraintDescription: must be between 8 to 41 alphanumeric characters.
+    Description: The database admin account password, between 8 to 41 alphanumeric characters.
+    MaxLength: '41'
+    MinLength: '8'
+    NoEcho: 'true'
+    Type: String
+
+Mappings:
+  DBClusterIdentifier: 
+    dev: 
+      Name: 'moodle-ecs-db-dev'
+    prod: 
+      Name: 'moodle-ecs-db-prod'
+  BackupRetentionPeriod: 
+    dev: 
+      RetentionPeriod: 1
+    prod: 
+      RetentionPeriod: 7
+  MultiAZ:
+    dev: 
+      Type: 'false'
+    prod: 
+      Type: 'true'
+  DBInstanceClass:
+    dev: 
+      Type: 'db.t3.small'
+    prod: 
+      Type: 'db.t3.small'
+
+Resources:
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Ref AWS::StackName
+      DBSubnetGroupDescription: CloudFormation managed DB subnet group.
+      SubnetIds: 
+        - Fn::ImportValue: 
+            !Join ['-', [!Ref 'VpcStackName', 'PrivateSubnetOne']]
+        - Fn::ImportValue: 
+            !Join ['-', [!Ref 'VpcStackName', 'PrivateSubnetTwo']]
+
+  VpcSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: allow connections to Database Cluster from ecs ec2 instances
+      VpcId: 
+        Fn::ImportValue:
+          !Join ['-', [!Ref 'VpcStackName', 'VPCId']]
+      SecurityGroupIngress: 
+      - IpProtocol: tcp
+        FromPort: 3306
+        ToPort: 3306
+        SourceSecurityGroupId: 
+          Fn::ImportValue: 
+            !Join ['-', [!Ref 'VpcStackName', 'EcsHostSecurityGroup']]
+      - IpProtocol: tcp
+        FromPort: 3306
+        ToPort: 3306
+        SourceSecurityGroupId: 
+          Fn::ImportValue: 
+            !Join ['-', [!Ref 'VpcStackName', 'BastionHostSecurityGroup']]
+ 
+  DatabaseCluster:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      Engine: aurora
+      DBClusterIdentifier: !FindInMap [DBClusterIdentifier, !Ref env, Name]
+      MasterUsername: !Ref DatabaseUsername
+      MasterUserPassword: !Ref DatabasePassword
+      BackupRetentionPeriod: !FindInMap [BackupRetentionPeriod, !Ref env, RetentionPeriod]
+      PreferredBackupWindow: 01:00-02:00
+      PreferredMaintenanceWindow: mon:03:00-mon:04:00
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      VpcSecurityGroupIds: 
+      - !Ref VpcSecurityGroup
+
+  DatabasePrimaryInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: aurora
+      DBClusterIdentifier: !Ref DatabaseCluster
+      DBInstanceClass: !FindInMap [DBInstanceClass, !Ref env, Type]
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+
+  DatabaseReplicaInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: aurora
+      DBClusterIdentifier: !Ref DatabaseCluster
+      DBInstanceClass: !FindInMap [DBInstanceClass, !Ref env, Type]
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+
+Outputs:
+  StackName:
+    Description: The name of this stack
+    Value: !Ref 'AWS::StackName'
+    Export:
+      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'StackName' ] ]
+  DBClusterName:
+    Description: The name of this Database cluster
+    Value: !Ref 'DatabaseCluster'
+    Export:
+      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'DBClusterName' ] ]
+  EndpointAddress:
+    Description: The Endpoint Address of this Database cluster writer
+    Value: !GetAtt 'DatabaseCluster.Endpoint.Address'
+    Export:
+      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'EndpointAddress' ] ]
+  EndpointPort:
+    Description: The Endpoint port of this Database cluster
+    Value: !GetAtt 'DatabaseCluster.Endpoint.Port'
+    Export:
+      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'EndpointPort' ] ]
+  ReadEndpointAddress:
+    Description: The Endpoint Address of this Database cluster reader
+    Value: !GetAtt 'DatabaseCluster.ReadEndpoint.Address'
+    Export:
+      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'ReadEndpointAddress' ] ]
+  

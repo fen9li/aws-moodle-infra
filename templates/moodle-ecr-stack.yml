@@ -1,0 +1,71 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+
+Metadata: 
+  License: Apache-2.0
+
+Description: A stack for moodle ecr
+
+Parameters:
+  env:
+    Description: Environment name to provision resources
+    Type: String
+    AllowedValues: ['dev', 'prod']
+    Default: dev
+  
+Mappings: 
+  EcrName: 
+    dev: 
+      Name: "moodle-ecr-dev"
+    prod: 
+      Name: "moodle-ecr-prod"
+      
+Resources:
+  EcrRepository: 
+    Type: AWS::ECR::Repository
+    Properties: 
+      RepositoryName: !FindInMap [EcrName, !Ref env, Name]
+      RepositoryPolicyText: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Sid: AllowPushPull
+            Effect: Allow
+            Principal: 
+              AWS: 
+                - !Join [ '', [ 'arn:aws:iam::', !Ref 'AWS::AccountId', ':user/fen9li' ] ]
+            Action: 
+              - "ecr:GetDownloadUrlForLayer"
+              - "ecr:BatchGetImage"
+              - "ecr:BatchCheckLayerAvailability"
+              - "ecr:PutImage"
+              - "ecr:InitiateLayerUpload"
+              - "ecr:UploadLayerPart"
+              - "ecr:CompleteLayerUpload"
+      Tags: 
+        - 
+          Key: Name
+          Value: !FindInMap [EcrName, !Ref env, Name]
+        - 
+          Key: Project
+          Value: moodle
+
+Outputs:
+  RegistryId:
+    Description: The id of ecr Registry
+    Value: !Ref 'AWS::AccountId' 
+  RepoName:
+    Description: The name of the ecr repository
+    Value: !Ref EcrRepository
+    Export:
+      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'RepoName' ] ]
+  RepoArn:
+    Description: The arn of the ecr repository
+    Value: !GetAtt EcrRepository.Arn
+    Export:
+      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'RepoArn' ] ]
+  RepoUri:
+    Description: The Uri of the ecr repository
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepository}"
+    Export:
+      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'RepoUri' ] ]
