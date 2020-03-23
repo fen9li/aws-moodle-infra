@@ -448,8 +448,7 @@ Resources:
     Properties:
       DefaultActions:
         - Type: 'forward'
-          #TargetGroupArn: !Ref 'DummyTargetGroupPublic'
-          TargetGroupArn: !Ref 'TargetGroup'
+          TargetGroupArn: !Ref 'DummyTargetGroupPublic'
       LoadBalancerArn: !Ref 'PublicLoadBalancer'
       Port: 80
       Protocol: HTTP
