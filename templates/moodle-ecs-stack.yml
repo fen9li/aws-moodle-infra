@@ -60,6 +60,12 @@ Parameters:
     Type: String
     Default: '123.243.138.223/32'
 
+  # parameters for EFS
+  MountPoint:
+    Description: The ecs container instances mount point for the EFS volume
+    Type: String
+    Default: MoodleDataVolumeEFS
+
 Mappings:
   # Hard values for the subnet masks, both dev and prod environment. 
   # These masks define the range of internal IP addresses that can be assigned.
@@ -401,6 +407,15 @@ Resources:
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash -xe
+
+          yum install -y nfs-utils
+          systemctl start nfs
+          systemctl enable nfs
+
+          yum install -y amazon-efs-utils
+          mkdir /mnt/efs
+          mount -t efs ${FileSystem}:/ /mnt/efs
+          
           echo ECS_CLUSTER=${ECSCluster} >> /etc/ecs/ecs.config
           yum install -y aws-cfn-bootstrap
           /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource ECSAutoScalingGroup --region ${AWS::Region}
@@ -588,6 +603,7 @@ Resources:
         - Key: Createdby
           Value: !Ref 'AWS::StackName'
 
+  # BastionHost resource
   BastionHostSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -630,6 +646,60 @@ Resources:
           Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'BastionHost' ] ]
         - Key: Createdby
           Value: !Ref 'AWS::StackName'
+
+  # EFS resource
+  MountTargetSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref 'VPC'
+      GroupDescription: Security group for mount target
+      Tags:
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'MountTargetSecurityGroup' ] ]
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+  MountTargetSecurityGroupIngressFromBastionHost:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Ingress from the bastion host
+      GroupId: !Ref MountTargetSecurityGroup
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref 'BastionHostSecurityGroup'
+  MountTargetSecurityGroupIngressFromEcsHost:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Ingress from the ecs hosts
+      GroupId: !Ref MountTargetSecurityGroup
+      IpProtocol: tcp
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref 'EcsHostSecurityGroup'
+
+  FileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      PerformanceMode: generalPurpose
+      FileSystemTags:
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'FileSystem' ] ]
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+  MountTargetOne:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref 'FileSystem'
+      SubnetId: !Ref 'PrivateSubnetOne'
+      SecurityGroups:
+        - !Ref MountTargetSecurityGroup
+  MountTargetTwo:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref 'FileSystem'
+      SubnetId: !Ref 'PrivateSubnetTwo'
+      SecurityGroups:
+        - !Ref MountTargetSecurityGroup
 
 # These are the values output by the CloudFormation template. Be careful
 # about changing any of them, because of them are exported with specific
@@ -695,3 +765,18 @@ Outputs:
     Value: !Ref BastionHost
     Export:
       Name: !Join [ '-', [ !Ref 'AWS::StackName', 'BastionHostInstanceId' ] ]
+  FileSystemID:
+    Description: File system ID
+    Value: !Ref FileSystem
+    Export:
+      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'FileSystemID' ] ]  
+  MountTargetOneID:
+    Description: Mount target one ID
+    Value: !Ref MountTargetOne
+    Export:
+      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'MountTargetOneID' ] ]
+  MountTargetTwoID:
+    Description: Mount target two ID
+    Value: !Ref MountTargetTwo
+    Export:
+      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'MountTargetTwoID' ] ]

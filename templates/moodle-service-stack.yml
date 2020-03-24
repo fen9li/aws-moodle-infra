@@ -23,7 +23,7 @@ Parameters:
     Description: A name for the service
   ImageUrl:
     Type: String
-    Default: nginx
+    Default: 'fen9li/easy-php-app:latest'
     Description: The url of a docker image that contains the application process that will handle the traffic for this service
   ContainerPort:
     Type: Number
@@ -155,3 +155,21 @@ Resources:
         Fn::ImportValue:
           !Join [':', [!Ref 'EcsStackName', 'PublicListener']]
       Priority: !Ref 'Priority'
+
+Outputs:
+  TaskArn:
+    Description: The arn of the task
+    Value: !Ref TaskDefinition
+    Export:
+      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'TaskArn' ] ]
+  ServiceArn:
+    Description: The arn of the service
+    Value: !Ref Service
+    Export:
+      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'ServiceArn' ] ]
+  ServiceName:
+    Description: The name of the service
+    Value: !GetAtt Service.Name
+    Export:
+      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'ServiceName' ] ]
+  
