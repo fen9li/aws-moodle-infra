@@ -12,16 +12,20 @@ Parameters:
     Type: String
     AllowedValues: ['dev', 'prod']
     Default: dev
-  
+  project:
+    Description: Project name to provision resources
+    Type: String
+    Default: moodle
+
 Mappings: 
   EcrName: 
     dev: 
-      Name: "moodle-ecr-dev"
+      Name: "moodle-dev-version"
     prod: 
-      Name: "moodle-ecr-prod"
-      
+      Name: "moodle-prod-version"
+
 Resources:
-  EcrRepository: 
+  Repository: 
     Type: AWS::ECR::Repository
     Properties: 
       RepositoryName: !FindInMap [EcrName, !Ref env, Name]
@@ -43,12 +47,10 @@ Resources:
               - "ecr:UploadLayerPart"
               - "ecr:CompleteLayerUpload"
       Tags: 
-        - 
-          Key: Name
-          Value: !FindInMap [EcrName, !Ref env, Name]
-        - 
-          Key: Project
-          Value: moodle
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'Repository' ] ]
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
 
 Outputs:
   RegistryId:
@@ -56,16 +58,16 @@ Outputs:
     Value: !Ref 'AWS::AccountId' 
   RepoName:
     Description: The name of the ecr repository
-    Value: !Ref EcrRepository
+    Value: !Ref Repository
     Export:
       Name: !Join [ '-', [ !Ref 'AWS::StackName', 'RepoName' ] ]
   RepoArn:
     Description: The arn of the ecr repository
-    Value: !GetAtt EcrRepository.Arn
+    Value: !GetAtt Repository.Arn
     Export:
       Name: !Join [ '-', [ !Ref 'AWS::StackName', 'RepoArn' ] ]
   RepoUri:
     Description: The Uri of the ecr repository
-    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepository}"
+    Value: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${Repository}"
     Export:
       Name: !Join [ '-', [ !Ref 'AWS::StackName', 'RepoUri' ] ]

@@ -23,6 +23,13 @@ jobs:
     - name: sync cloudformation templates to s3 bucket `moodle-ecs-stack-templates-home`
       run: |
         aws s3 sync templates s3://moodle-ecs-stack-templates-home --delete
+    - name: Create moodle ecr stack if not exists, update stack if exists 
+      env:
+        stackName: moodle-ecr-stack-dev
+        stackTemplateUrl: "http://moodle-ecs-stack-templates-home.s3.amazonaws.com/moodle-ecr-stack.yml"
+        env: dev
+      run: |
+        ./.github/bin/ecr-stack-exists.sh
     - name: Create moodle ecs stack if not exists, update stack if exists 
       env:
         stackName: moodle-ecs-stack-dev
@@ -48,10 +55,3 @@ jobs:
 #        DBPassword: ${{ secrets.AURORA_MASTER_PASSWORD_DEV }}
 #      run: |
 #        ./.github/bin/rds-stack-exists.sh
-#    - name: Create moodle ecr stack if not exists, update stack if exists 
-#      env:
-#        stackName: moodle-ecr-stack-dev
-#        stackTemplateUrl: "http://moodle-ecs-stack-templates-home.s3.amazonaws.com/moodle-ecr-stack.yml"
-#        env: dev
-#      run: |
-#        ./.github/bin/ecr-stack-exists.sh
