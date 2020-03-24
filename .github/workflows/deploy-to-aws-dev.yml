@@ -30,6 +30,14 @@ jobs:
         env: dev
       run: |
         ./.github/bin/ecs-stack-exists.sh      
+    - name: Create moodle service stack if not exists, update stack if exists 
+      env:
+        stackName: moodle-service-stack-dev
+        stackTemplateUrl: "http://moodle-ecs-stack-templates-home.s3.amazonaws.com/moodle-service-stack.yml"
+        env: dev
+        EcsStackName: moodle-ecs-stack-dev
+      run: |
+        ./.github/bin/service-stack-exists.sh      
 #    - name: Create moodle rds stack if not exists, update stack if exists 
 #      env:
 #        stackName: moodle-rds-stack-dev
