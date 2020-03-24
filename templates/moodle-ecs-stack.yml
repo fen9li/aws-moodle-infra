@@ -18,11 +18,6 @@ Parameters:
     Type: String
     Default: moodle
 
-#  SSHLocation:
-#    Description: ip address allowed to ssh login bastion host, use command 'curl checkip.amazonaws.com' to get your Internet facing ip address
-#    Type: String
-#    Default: '123.243.138.223/32'
-
   # parameters for ecs
   DesiredCapacity:
     Type: Number
@@ -46,6 +41,24 @@ Parameters:
                     r3.large, r3.xlarge, r3.2xlarge, r3.4xlarge, r3.8xlarge, 
                     i2.xlarge, i2.2xlarge, i2.4xlarge, i2.8xlarge]
     ConstraintDescription: Please choose a valid instance type.
+
+  # parameters for bastion host
+  ImageId:
+    Description: moodle bastion host AMI ID 
+    Type: String
+    Default: ami-08fdde86b93accf1c
+  KeyName:
+    Description: EC2 instance key name
+    Type: String
+    Default: moodle-keypair
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    Default: t3.nano
+  SSHLocation:
+    Description: ip address allowed to ssh login bastion host, use command 'curl checkip.amazonaws.com' to get your Internet facing ip address
+    Type: String
+    Default: '123.243.138.223/32'
 
 Mappings:
   # Hard values for the subnet masks, both dev and prod environment. 
@@ -342,6 +355,15 @@ Resources:
       GroupId: !Ref 'EcsHostSecurityGroup'
       IpProtocol: -1
       SourceSecurityGroupId: !Ref 'EcsHostSecurityGroup'
+  EcsSecurityGroupIngressFromBastionHost:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Ingress from the bastion host
+      GroupId: !Ref EcsHostSecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !Ref BastionHostSecurityGroup
 
   # Autoscaling group. This launches the actual EC2 instances that will register
   # themselves as members of the cluster, and run the docker containers.
@@ -372,6 +394,7 @@ Resources:
     Type: AWS::AutoScaling::LaunchConfiguration
     Properties:
       ImageId: !Ref 'ECSAMI'
+      KeyName: !Ref 'KeyName'
       SecurityGroups: [!Ref 'EcsHostSecurityGroup']
       InstanceType: !Ref 'InstanceType'
       IamInstanceProfile: !Ref 'EC2InstanceProfile'
@@ -565,6 +588,49 @@ Resources:
         - Key: Createdby
           Value: !Ref 'AWS::StackName'
 
+  BastionHostSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow ssh login to the bastion host
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'BastionHostSecurityGroup' ] ]
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+  BastionHostSecurityGroupIngressFromInternet:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Ingress from the Internet
+      GroupId: !Ref BastionHostSecurityGroup
+      CidrIp: !Ref SSHLocation
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+
+  BastionHost:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref ImageId
+      KeyName: !Ref KeyName
+      InstanceType: !Ref InstanceType
+      SubnetId: !Ref 'PublicSubnetOne'
+      SecurityGroupIds: 
+        - !Ref 'BastionHostSecurityGroup'
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          yum update -y
+          yum install -y mariadb
+          yum install -y nfs-utils
+          systemctl start nfs
+          systemctl enable nfs
+      Tags: 
+        - Key: Name
+          Value: !Join [ '-', [ !Ref 'project', !Ref 'env', 'BastionHost' ] ]
+        - Key: Createdby
+          Value: !Ref 'AWS::StackName'
+
 # These are the values output by the CloudFormation template. Be careful
 # about changing any of them, because of them are exported with specific
 # names so that the other task related CF templates can use them.
@@ -619,3 +685,13 @@ Outputs:
     Value: !Ref 'EcsHostSecurityGroup'
     Export:
       Name: !Join [ ':', [ !Ref 'AWS::StackName', 'EcsHostSecurityGroup' ] ]
+  BastionHostPublicIP:
+    Description: The PublicIP of the bastion host
+    Value: !GetAtt BastionHost.PublicIp
+    Export:
+      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'BastionHostPublicIP' ] ]
+  BastionHostInstanceId:
+    Description: The InstanceId of the bastion host
+    Value: !Ref BastionHost
+    Export:
+      Name: !Join [ '-', [ !Ref 'AWS::StackName', 'BastionHostInstanceId' ] ]
